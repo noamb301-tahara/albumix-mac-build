@@ -20,9 +20,11 @@ jobs:
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           echo "$P12" | base64 -d > c.p12 || { echo "MAC_CERT_P12: WRONG (not base64)"; exit 1; }
-          openssl pkcs12 -in c.p12 -nokeys -passin env:PW -legacy 2>/dev/null > c.pem \
-            || openssl pkcs12 -in c.p12 -nokeys -passin env:PW 2>/dev/null > c.pem \
-            || { echo "MAC_CERT_P12 or MAC_CERT_PASSWORD: WRONG"; exit 1; }
+          echo "p12 bytes: $(wc -c < c.p12), password length: ${#PW}"
+          openssl version
+          if ! openssl pkcs12 -in c.p12 -nokeys -passin env:PW -legacy > c.pem 2> err.txt; then
+            openssl pkcs12 -in c.p12 -nokeys -passin env:PW > c.pem 2>> err.txt               || { echo "MAC_CERT_P12 or MAC_CERT_PASSWORD: WRONG"; sed 's/^/  /' err.txt | head -8; exit 1; }
+          fi
           echo "certificate + password: OK"
           subj=$(openssl x509 -in c.pem -noout -subject)
           echo "$subj" | grep -q "($TEAM)" && echo "APPLE_TEAM_ID: OK" || { echo "APPLE_TEAM_ID: WRONG"; exit 1; }
