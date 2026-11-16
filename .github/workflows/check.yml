@@ -1,0 +1,29 @@
+# Checks the secrets without showing them: says only OK or WRONG for each.
+name: Check secrets
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Source can be read with the deploy key
+        uses: actions/checkout@v4
+        with:
+          repository: noamb301-tahara/albumly-desktop-src
+          ssh-key: ${{ secrets.SRC_DEPLOY_KEY }}
+          sparse-checkout: package.json
+      - name: Certificate and its password
+        env:
+          P12: ${{ secrets.MAC_CERT_P12 }}
+          PW: ${{ secrets.MAC_CERT_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "$P12" | base64 -d > c.p12 || { echo "MAC_CERT_P12: WRONG (not base64)"; exit 1; }
+          openssl pkcs12 -in c.p12 -nokeys -passin env:PW -legacy 2>/dev/null > c.pem \
+            || openssl pkcs12 -in c.p12 -nokeys -passin env:PW 2>/dev/null > c.pem \
+            || { echo "MAC_CERT_P12 or MAC_CERT_PASSWORD: WRONG"; exit 1; }
+          echo "certificate + password: OK"
+          subj=$(openssl x509 -in c.pem -noout -subject)
+          echo "$subj" | grep -q "($TEAM)" && echo "APPLE_TEAM_ID: OK" || { echo "APPLE_TEAM_ID: WRONG"; exit 1; }
+          rm -f c.p12 c.pem
