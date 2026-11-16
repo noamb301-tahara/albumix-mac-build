@@ -1,0 +1,105 @@
+# Builds the Mac edition of the desktop app on GitHub's own Macs: one build for
+# Macs with Apple's processor (arm64) and one for older Intel Macs (x64).
+#
+# Run it by hand (Actions -> "Mac edition" -> Run workflow). The finished
+# .dmg and .zip files are kept as the run's artifacts; when "release" is given,
+# they are also attached to that version in the public releases repo, beside
+# the Windows installer, so installed Macs find the update there.
+#
+# The source lives in a private repo, checked out with a read-only deploy key
+# (secret SRC_DEPLOY_KEY). The models are not in git: they live in models.zip on
+# this repo's release "models", and are fetched first.
+#
+# Signing: when the secrets MAC_CERT_P12 (the Developer ID Application
+# certificate, base64), MAC_CERT_PASSWORD, APPLE_ID,
+# APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID are set, the app is signed and
+# notarised; without them it is built unsigned, and the Mac warns on opening.
+name: Mac edition
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Version to attach the Mac files to (for example 1.9.54). Empty: build only."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: noamb301-tahara/albumly-desktop-src
+          ssh-key: ${{ secrets.SRC_DEPLOY_KEY }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Fetch the models
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download models -R "${{ github.repository }}" -p models.zip
+          unzip -q -o models.zip
+          rm models.zip
+
+      - name: Build the app
+        run: npm run desktop:build
+
+      - name: Pack for the Mac
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD
+          node desktop/pack.mjs || node desktop/pack.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.runner }}
+          path: |
+            desktop-dist/Albumix-*.dmg
+            desktop-dist/Albumix-*.zip
+            desktop-dist/Albumix-*.blockmap
+            desktop-dist/latest-mac.yml
+          retention-days: 30
+
+  # Both builds write a latest-mac.yml naming only their own files; the updater
+  # wants one that names both, so they are merged before uploading.
+  release:
+    if: ${{ inputs.release != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: mac
+      - name: Merge latest-mac.yml and attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          V: ${{ inputs.release }}
+        run: |
+          set -e
+          a=mac/mac-macos-15/latest-mac.yml
+          b=mac/mac-macos-15-intel/latest-mac.yml
+          { sed -n '1,/^files:/p' "$a"; sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' "$a"; \
+            sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' "$b"; sed -n '/^path:/,$p' "$a"; } > latest-mac.yml
+          cat latest-mac.yml
+          gh release upload "v$V" -R noamb301-tahara/albumly-desktop-releases --clobber \
+            latest-mac.yml mac/*/Albumix-*.dmg mac/*/Albumix-*.zip mac/*/Albumix-*.blockmap
