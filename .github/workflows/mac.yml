@@ -32,7 +32,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        # Apple-processor Macs are built on an Intel Mac too: GitHub's own
+        # Apple-processor machines were often too busy to start at all.
+        include:
+          - { runner: macos-15-intel, arch: x64 }
+          - { runner: macos-15-intel, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -66,13 +70,14 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MAC_ARCH: ${{ matrix.arch }}
         run: |
           [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD
           node desktop/pack.mjs || node desktop/pack.mjs
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mac-${{ matrix.runner }}
+          name: mac-${{ matrix.arch }}
           path: |
             desktop-dist/Albumix-*.dmg
             desktop-dist/Albumix-*.zip
@@ -96,8 +101,8 @@ jobs:
           V: ${{ inputs.release }}
         run: |
           set -e
-          a=mac/mac-macos-15/latest-mac.yml
-          b=mac/mac-macos-15-intel/latest-mac.yml
+          a=mac/mac-arm64/latest-mac.yml
+          b=mac/mac-x64/latest-mac.yml
           { sed -n '1,/^files:/p' "$a"; sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' "$a"; \
             sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' "$b"; sed -n '/^path:/,$p' "$a"; } > latest-mac.yml
           cat latest-mac.yml
