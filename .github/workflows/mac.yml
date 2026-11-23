@@ -34,9 +34,10 @@ jobs:
       matrix:
         # Apple-processor Macs are built on an Intel Mac too: GitHub's own
         # Apple-processor machines were often too busy to start at all.
+        # One edition for every Mac (2026-11-23): both processors joined in
+        # one app, like Photoshop -- she did not want customers choosing.
         include:
-          - { runner: macos-15-intel, arch: x64 }
-          - { runner: macos-15-intel, arch: arm64 }
+          - { runner: macos-15-intel, arch: universal }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -85,8 +86,7 @@ jobs:
             desktop-dist/latest-mac.yml
           retention-days: 30
 
-  # Both builds write a latest-mac.yml naming only their own files; the updater
-  # wants one that names both, so they are merged before uploading.
+  # The one Mac edition (dmg) is attached to the release.
   release:
     if: ${{ inputs.release != '' }}
     needs: build
@@ -95,19 +95,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: mac
-      - name: Merge latest-mac.yml and attach to the release
+      - name: Attach to the release
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           V: ${{ inputs.release }}
         run: |
           set -e
-          a=mac/mac-arm64/latest-mac.yml
-          b=mac/mac-x64/latest-mac.yml
-          { sed -n '1,/^files:/p' "$a"; sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' "$a"; \
-            sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' "$b"; sed -n '/^path:/,$p' "$a"; } > latest-mac.yml
-          cat latest-mac.yml
           # No latest-mac.yml (2026-11-23): Mac copies up to 1.9.56 install from it
           # inside the app, and that hung at 100% on customers' Macs. Without it they
           # fall back to latest.json, which opens the Mac download page.
           gh release upload "v$V" -R noamb301-tahara/albumly-desktop-releases --clobber \
-            mac/*/Albumix-*.dmg mac/*/Albumix-*.zip mac/*/Albumix-*.blockmap
+            mac/*/Albumix-*.dmg mac/*/Albumix-*.dmg.blockmap
